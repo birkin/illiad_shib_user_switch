@@ -136,6 +136,7 @@ class ShibTunneler(object):
                 values_dict[u'SAMLResponse'] = input_node.getAttributeNode( u'value' ).nodeValue
         assert sorted( values_dict.keys() ) == [u'RelayState', u'SAMLResponse'], sorted( values_dict.keys() )
         self.auth_info_response_params_dict = values_dict
+        log.debug( 'auth_info_response_params_dict, ```{}```'.format( self.auth_info_response_params_dict ) )
         log.debug( 'auth-info response parsed' )
         return
 
