@@ -2,6 +2,7 @@
 
 import logging, logging.config, os
 import requests
+from xml.dom import minidom
 
 
 log = logging.getLogger( 'illiad_shib_logger' )
@@ -28,126 +29,105 @@ logging.config.dictConfig( logging_dct )
 log.debug( '\n---\nSTART\n---' )
 
 
-def hit_shib_url():
-    URL = os.environ['ILL_SHB__EASYA_TEST_URL']
-    r = requests.get( URL )
-    log.debug( r.content )
-    return r.content
-
 
 def run_tunneler():
     st = ShibTunneler()
-    st.access_vars_page()
-    # st.post_auth_info()
-    # st.parse_auth_info_response()
-    # assert type(st.auth_info_response_params_dict) == dict, Exception( 'st.auth_info_response_params_dict not dict; validation failed' )
-    # st.post_final()  # now st.json_vars has all apache headers, including shib headers
-    return 'foo'
+    json_data = st.access_vars_page()
+    return json_data
 
 
 class ShibTunneler(object):
-    '''
-    - Purpose: to return apache shib header info to calling application.
-    - Assumes SHIB_VARS_URL is a shib-protected page which, after successful authentication,
-    returns json with keys of apache/shib header variables.
-    - Note: capturing username/passwords, even briefly to pass on, is _not_ recommended;
-    use only where:
-    a) shib implementation does not offer forced reauthentication
-    b) forced reauthentication is required
-    - Usage:
-    settings_dict = {
-        'SHIB_VARS_URL': the-value,  # destination json apache/django/shib vars page
-        'SHIB_POST_URL_A': the-value,  # shib auth form
-        'SHIB_POST_URL_B': the-value,  # non-javascript confirmation form
-        'USERNAME': the-value,
-        'PASSWORD': the-value }
-    st = ShibTunneler( settings=settings_dict )
-    st.access_vars_page()
-    assert type(st.auth_info_response_params_dict) == dict, Exception( 'st.auth_info_response_params_dict not dict; validation failed' )
-    '''
+    """
+    Tunnels through shib with non-two-factor credentials.
+    Usage:
+        st = ShibTunneler()
+        json_data = st.access_vars_page()
+    """
 
-    def __init__(self, settings=None ):
-        if isinstance( settings, dict) :
-            s = imp.new_module( 'settings' )
-            for k, v in settings.items():
-                setattr( s, k, v )
-            settings = s
-        self.SHIB_VARS_URL = os.environ['ILL_SHB__EASYA_TEST_URL']  # destination json apache/django/shib vars page
-        self.SHIB_POST_URL_A = os.environ['ILL_SHB__SSO_AUTHN_URL']  # shib auth form
-        self.SHIB_POST_URL_B = os.environ['ILL_SHB__IDP_POST_URL']  # non-javascript confirmation form
+    def __init__( self  ):
+        self.SHIB_VARS_URL = os.environ['ILL_SHB__EASYA_TEST_URL']  # target json shib-vars page
+        self.SHIB_POST_URL_A = os.environ['ILL_SHB__SSO_AUTHN_URL']  # IDP `Authn` url; for browser, would auto-redirect to initial target url
+        self.SHIB_POST_URL_B = os.environ['ILL_SHB__IDP_POST_URL']  # IDP `SAML/POST` url; redirects on success to initial target url
         self.USERNAME = os.environ['ILL_SHB__LOGIN_USERNAME']
         self.PASSWORD = os.environ['ILL_SHB__LOGIN_PASSWORD']
-        self.cookies_a = None
-        self.cookies_b = None
-        self.auth_info_response_html = None
-        self.auth_info_response_params_dict = None
-        self.json_vars = None
         log.debug( 'tunneler instantiated' )
 
     def access_vars_page( self ):
+        """ Tries desired url; is redirected to display of shib login page. """
         with requests.Session() as sess:
             requests.packages.urllib3.disable_warnings()
             r = sess.get( self.SHIB_VARS_URL, verify=False )
-            self.cookies_a = r.cookies
-            log.debug( 'vars-page initial html, ```{}```'.format( r.content.decode('utf-8', 'replace') ) )
-            log.debug( '---' )
-            log.debug( 'cookies_a, ```{}```'.format( self.cookies_a ) )
+            log.debug( 'vars-page initial html, ```{}```\n---'.format( r.content.decode('utf-8', 'replace') ) )
             log.debug( 'accessed vars-page' )
-            sess = self.post_auth_info( sess )
-            self.parse_auth_info_response()
-            self.post_final( sess )
-        return
+            ( sess, auth_info_response_html ) = self.post_auth_info( sess )
+            auth_info_params_dct = self.parse_auth_info_response( auth_info_response_html )
+            jsn = self.post_final( sess, auth_info_params_dct )
+        return jsn
 
     def post_auth_info( self, sess ):
+        """ Posts username and password to IDP authentication url.
+            Called by access_vars_page(). """
         payload = {
             'j_password': self.PASSWORD, 'j_username': self.USERNAME }
-        r2 = sess.post( self.SHIB_POST_URL_A, data=payload, verify=False )
-        self.auth_info_response_html = r2.content.decode( 'utf-8', 'replace' )
-        self.cookies_b = r2.cookies
-        # log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
-        log.debug( 'cookies_b, ```{}```'.format( self.cookies_b ) )
+        r = sess.post( self.SHIB_POST_URL_A, data=payload, verify=False )
+        auth_info_response_html = r.content.decode( 'utf-8', 'replace' )
+        log.debug( 'auth_info_response_html, ```{}```'.format( auth_info_response_html ) )
         log.debug( 'auth-info posted' )
-        return sess
+        return ( sess, auth_info_response_html )
 
-    def parse_auth_info_response( self ):
-        from xml.dom import minidom
+    def parse_auth_info_response( self, auth_info_response_html ):
+        """ Parses out `RelayState` and `SAMLResponse` response data.
+            Called by access_vars_page() """
+        xml_doc = self.docify_response( auth_info_response_html )  # getting here means shib-auth was successful
+        input_nodes = xml_doc.getElementsByTagName( 'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
+        auth_info_params_dct = self.parse_input_nodes(  input_nodes )
+        log.debug( 'auth-info response parsed' )
+        return auth_info_params_dct
+
+    def docify_response( self, auth_info_response_html ):
+        """ Converts html response into an xml-doc.
+            Called by parse_auth_info_response() """
         try:
-            xmldoc = minidom.parseString( self.auth_info_response_html )
+            xml_doc = minidom.parseString( auth_info_response_html )
+            log.debug( 'html doc-ified' )
+            return xml_doc
         except Exception as e:
-            log.error( 'error parsing auth_info_response_html, ```{err_a}```, ```{err_b}```'.format( err_a=e, err_b=repr(e) ) )
-            return
-        ## getting here means shib-auth was successful
-        input_nodes = xmldoc.getElementsByTagName( 'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
-        values_dict = {}
+            message = 'error parsing auth_info_response_html, ```{err_a}```, ```{err_b}```'.format( err_a=e, err_b=repr(e) )
+            log.error( message )
+            sys.exit( message )
+
+    def parse_input_nodes( self, input_nodes ):
+        """ Parses the three input nodes to grab `RelayState` and `SAMLResponse` data.
+            Called by parse_auth_info_response() """
+        values_dct = {}
         for input_node in input_nodes:
             if input_node.getAttributeNode( 'name' ) == None:  # ignore the 'submit' one
                 pass
             elif input_node.getAttributeNode( 'name' ).nodeValue == 'RelayState':
-                values_dict['RelayState'] = input_node.getAttributeNode( 'value' ).nodeValue
+                values_dct['RelayState'] = input_node.getAttributeNode( 'value' ).nodeValue
             elif input_node.getAttributeNode( 'name' ).nodeValue == 'SAMLResponse':
-                values_dict['SAMLResponse'] = input_node.getAttributeNode( 'value' ).nodeValue
-        assert sorted( values_dict.keys() ) == ['RelayState', 'SAMLResponse'], sorted( values_dict.keys() )
-        self.auth_info_response_params_dict = values_dict
-        log.debug( 'auth_info_response_params_dict, ```{}```'.format( self.auth_info_response_params_dict ) )
-        log.debug( 'auth-info response parsed' )
-        return
+                values_dct['SAMLResponse'] = input_node.getAttributeNode( 'value' ).nodeValue
+        # log.debug( 'values_dct, ```{}```'.format(values_dct) )
+        log.debug( 'values_dct.keys(), ```{}```'.format( values_dct.keys() ) )
+        return values_dct
 
-    def post_final( self, sess ):
-        assert type(self.auth_info_response_params_dict) == dict
+    def post_final( self, sess, auth_info_params_dct ):
+        """ Posts `RelayState` and `SAMLResponse` data to the IDP `SAML/POST` url.
+            Auto-performed in user-browser by javascript; must be explicitly called otherwise.
+            Called by access_vars_page() """
         payload = {
-            'RelayState': self.auth_info_response_params_dict['RelayState'],
-            'SAMLResponse': self.auth_info_response_params_dict['SAMLResponse'] }
+            'RelayState': auth_info_params_dct['RelayState'],
+            'SAMLResponse': auth_info_params_dct['SAMLResponse'] }
         requests.packages.urllib3.disable_warnings()
-        r3 = sess.post( self.SHIB_POST_URL_B, data=payload, verify=False )
-        self.json_vars = r3.content.decode( 'utf-8', 'replace' )
-        log.debug( 'json response, ```{}```'.format(self.json_vars) )
+        r = sess.post( self.SHIB_POST_URL_B, data=payload, verify=False )
+        jsn = r.content.decode( 'utf-8', 'replace' )
+        log.debug( 'json-data, ```{}```'.format(jsn) )
         log.debug( 'final post complete' )
-        return
+        return jsn
 
   # end class ShibTunneler()
 
 
 
 if __name__ == '__main__':
-    # hit_shib_url()
     run_tunneler()
