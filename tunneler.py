@@ -40,7 +40,7 @@ def run_tunneler():
     st.access_vars_page()
     # st.post_auth_info()
     # st.parse_auth_info_response()
-    # assert type(st.auth_info_response_params_dict) == dict, Exception( u'st.auth_info_response_params_dict not dict; validation failed' )
+    # assert type(st.auth_info_response_params_dict) == dict, Exception( 'st.auth_info_response_params_dict not dict; validation failed' )
     # st.post_final()  # now st.json_vars has all apache headers, including shib headers
     return 'foo'
 
@@ -56,22 +56,22 @@ class ShibTunneler(object):
     b) forced reauthentication is required
     - Usage:
     settings_dict = {
-        u'SHIB_VARS_URL': the-value,  # destination json apache/django/shib vars page
-        u'SHIB_POST_URL_A': the-value,  # shib auth form
-        u'SHIB_POST_URL_B': the-value,  # non-javascript confirmation form
-        u'USERNAME': the-value,
-        u'PASSWORD': the-value }
+        'SHIB_VARS_URL': the-value,  # destination json apache/django/shib vars page
+        'SHIB_POST_URL_A': the-value,  # shib auth form
+        'SHIB_POST_URL_B': the-value,  # non-javascript confirmation form
+        'USERNAME': the-value,
+        'PASSWORD': the-value }
     st = ShibTunneler( settings=settings_dict )
     st.access_vars_page()
     st.post_auth_info()
     st.parse_auth_info_response()
-    assert type(st.auth_info_response_params_dict) == dict, Exception( u'st.auth_info_response_params_dict not dict; validation failed' )
+    assert type(st.auth_info_response_params_dict) == dict, Exception( 'st.auth_info_response_params_dict not dict; validation failed' )
     st.post_final()  # now st.json_vars has all apache headers, including shib headers
     '''
 
     def __init__(self, settings=None ):
         if isinstance( settings, dict) :
-            s = imp.new_module( u'settings' )
+            s = imp.new_module( 'settings' )
             for k, v in settings.items():
                 setattr( s, k, v )
             settings = s
@@ -102,6 +102,8 @@ class ShibTunneler(object):
 
             self.parse_auth_info_response()
 
+            self.post_final( sess )
+
             1/0
 
         return
@@ -112,7 +114,7 @@ class ShibTunneler(object):
         r2 = sess.post( self.SHIB_POST_URL_A, data=payload, verify=False )
         self.auth_info_response_html = r2.content.decode( 'utf-8', 'replace' )
         self.cookies_b = r2.cookies
-        log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
+        # log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
         log.debug( 'cookies_b, ```{}```'.format( self.cookies_b ) )
         log.debug( 'auth-info posted' )
         return sess
@@ -125,19 +127,31 @@ class ShibTunneler(object):
             log.error( 'error parsing auth_info_response_html, ```{err_a}```, ```{err_b}```'.format( err_a=e, err_b=repr(e) ) )
             return
         ## getting here means shib-auth was successful
-        input_nodes = xmldoc.getElementsByTagName( u'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
+        input_nodes = xmldoc.getElementsByTagName( 'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
         values_dict = {}
         for input_node in input_nodes:
-            if input_node.getAttributeNode( u'name' ) == None:  # ignore the 'submit' one
+            if input_node.getAttributeNode( 'name' ) == None:  # ignore the 'submit' one
                 pass
-            elif input_node.getAttributeNode( u'name' ).nodeValue == u'RelayState':
-                values_dict[u'RelayState'] = input_node.getAttributeNode( u'value' ).nodeValue
-            elif input_node.getAttributeNode( u'name' ).nodeValue == u'SAMLResponse':
-                values_dict[u'SAMLResponse'] = input_node.getAttributeNode( u'value' ).nodeValue
-        assert sorted( values_dict.keys() ) == [u'RelayState', u'SAMLResponse'], sorted( values_dict.keys() )
+            elif input_node.getAttributeNode( 'name' ).nodeValue == 'RelayState':
+                values_dict['RelayState'] = input_node.getAttributeNode( 'value' ).nodeValue
+            elif input_node.getAttributeNode( 'name' ).nodeValue == 'SAMLResponse':
+                values_dict['SAMLResponse'] = input_node.getAttributeNode( 'value' ).nodeValue
+        assert sorted( values_dict.keys() ) == ['RelayState', 'SAMLResponse'], sorted( values_dict.keys() )
         self.auth_info_response_params_dict = values_dict
         log.debug( 'auth_info_response_params_dict, ```{}```'.format( self.auth_info_response_params_dict ) )
         log.debug( 'auth-info response parsed' )
+        return
+
+    def post_final( self, sess ):
+        assert type(self.auth_info_response_params_dict) == dict
+        payload = {
+            'RelayState': self.auth_info_response_params_dict['RelayState'],
+            'SAMLResponse': self.auth_info_response_params_dict['SAMLResponse'] }
+        requests.packages.urllib3.disable_warnings()
+        r3 = sess.post( self.SHIB_POST_URL_B, data=payload, verify=False )
+        self.json_vars = r3.content.decode( 'utf-8', 'replace' )
+        log.debug( 'json response, ```{}```'.format(self.json_vars) )
+        log.debug( 'final post complete' )
         return
 
   # def access_vars_page( self ):
@@ -193,30 +207,30 @@ class ShibTunneler(object):
   #       log.error( 'error parsing auth_info_response_html, ```{err_a}```, ```{err_b}```'.format( err_a=e, err_b=repr(e) ) )
   #       return
   #   ## getting here means shib-auth was successful
-  #   input_nodes = xmldoc.getElementsByTagName( u'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
+  #   input_nodes = xmldoc.getElementsByTagName( 'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
   #   values_dict = {}
   #   for input_node in input_nodes:
-  #     if input_node.getAttributeNode( u'name' ) == None:  # ignore the 'submit' one
+  #     if input_node.getAttributeNode( 'name' ) == None:  # ignore the 'submit' one
   #       pass
-  #     elif input_node.getAttributeNode( u'name' ).nodeValue == u'RelayState':
-  #       values_dict[u'RelayState'] = input_node.getAttributeNode( u'value' ).nodeValue
-  #     elif input_node.getAttributeNode( u'name' ).nodeValue == u'SAMLResponse':
-  #       values_dict[u'SAMLResponse'] = input_node.getAttributeNode( u'value' ).nodeValue
-  #   assert sorted( values_dict.keys() ) == [u'RelayState', u'SAMLResponse'], sorted( values_dict.keys() )
+  #     elif input_node.getAttributeNode( 'name' ).nodeValue == 'RelayState':
+  #       values_dict['RelayState'] = input_node.getAttributeNode( 'value' ).nodeValue
+  #     elif input_node.getAttributeNode( 'name' ).nodeValue == 'SAMLResponse':
+  #       values_dict['SAMLResponse'] = input_node.getAttributeNode( 'value' ).nodeValue
+  #   assert sorted( values_dict.keys() ) == ['RelayState', 'SAMLResponse'], sorted( values_dict.keys() )
   #   self.auth_info_response_params_dict = values_dict
   #   log.debug( 'auth-info response parsed' )
   #   return
 
-    def post_final(self):
-        assert type(self.auth_info_response_params_dict) == dict
-        payload = {
-            u'RelayState': self.auth_info_response_params_dict[u'RelayState'],
-            u'SAMLResponse': self.auth_info_response_params_dict[u'SAMLResponse'] }
-        requests.packages.urllib3.disable_warnings()
-        r = requests.post( self.SHIB_POST_URL_B, data=payload, cookies=self.cookies_b, verify=False )
-        self.json_vars = r.content.decode( u'utf-8', u'replace' )
-        log.debug( 'final post complete' )
-        return
+    # def post_final(self):
+    #     assert type(self.auth_info_response_params_dict) == dict
+    #     payload = {
+    #         'RelayState': self.auth_info_response_params_dict['RelayState'],
+    #         'SAMLResponse': self.auth_info_response_params_dict['SAMLResponse'] }
+    #     requests.packages.urllib3.disable_warnings()
+    #     r = requests.post( self.SHIB_POST_URL_B, data=payload, cookies=self.cookies_b, verify=False )
+    #     self.json_vars = r.content.decode( 'utf-8', 'replace' )
+    #     log.debug( 'final post complete' )
+    #     return
 
   # end class ShibTunneler()
 
