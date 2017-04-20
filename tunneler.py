@@ -38,7 +38,7 @@ def hit_shib_url():
 def run_tunneler():
     st = ShibTunneler()
     st.access_vars_page()
-    st.post_auth_info()
+    # st.post_auth_info()
     st.parse_auth_info_response()
     assert type(st.auth_info_response_params_dict) == dict, Exception( u'st.auth_info_response_params_dict not dict; validation failed' )
     st.post_final()  # now st.json_vars has all apache headers, including shib headers
@@ -89,27 +89,79 @@ class ShibTunneler(object):
     log.debug( 'tunneler instantiated' )
 
   def access_vars_page( self ):
-    with requests.Session() as s:
+    with requests.Session() as sess:
+
         requests.packages.urllib3.disable_warnings()
-        r = s.get( self.SHIB_VARS_URL, verify=False )
+        r = sess.get( self.SHIB_VARS_URL, verify=False )
         self.cookies_a = r.cookies
         log.debug( 'vars-page initial html, ```{}```'.format( r.content.decode('utf-8', 'replace') ) )
         log.debug( '---' )
         log.debug( 'cookies_a, ```{}```'.format( self.cookies_a ) )
         log.debug( 'accessed vars-page' )
 
-        payload = {
-            'j_password': self.PASSWORD, 'j_username': self.USERNAME }
-        r2 = s.post( self.SHIB_POST_URL_A, data=payload, verify=False )
-        self.auth_info_response_html = r2.content.decode( 'utf-8', 'replace' )
-        self.cookies_b = r2.cookies
-        log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
-        log.debug( 'cookies_b, ```{}```'.format( self.cookies_b ) )
-        log.debug( 'auth-info posted' )
+        sess = self.post_auth_info( sess )
+
+        self.parse_auth_info_response()
 
         1/0
 
     return
+
+def post_auth_info( self, sess ):
+    payload = {
+        'j_password': self.PASSWORD, 'j_username': self.USERNAME }
+    r2 = sess.post( self.SHIB_POST_URL_A, data=payload, verify=False )
+    self.auth_info_response_html = r2.content.decode( 'utf-8', 'replace' )
+    self.cookies_b = r2.cookies
+    log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
+    log.debug( 'cookies_b, ```{}```'.format( self.cookies_b ) )
+    log.debug( 'auth-info posted' )
+    return sess
+
+def parse_auth_info_response( self, sess ):
+    from xml.dom import minidom
+    try:
+        xmldoc = minidom.parseString( self.auth_info_response_html )
+    except Exception as e:
+        log.error( 'error parsing auth_info_response_html, ```{err_a}```, ```{err_b}```'.format( err_a=e, err_b=repr(e) ) )
+        return
+    ## getting here means shib-auth was successful
+    input_nodes = xmldoc.getElementsByTagName( u'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
+    values_dict = {}
+    for input_node in input_nodes:
+        if input_node.getAttributeNode( u'name' ) == None:  # ignore the 'submit' one
+            pass
+        elif input_node.getAttributeNode( u'name' ).nodeValue == u'RelayState':
+            values_dict[u'RelayState'] = input_node.getAttributeNode( u'value' ).nodeValue
+        elif input_node.getAttributeNode( u'name' ).nodeValue == u'SAMLResponse':
+            values_dict[u'SAMLResponse'] = input_node.getAttributeNode( u'value' ).nodeValue
+    assert sorted( values_dict.keys() ) == [u'RelayState', u'SAMLResponse'], sorted( values_dict.keys() )
+    self.auth_info_response_params_dict = values_dict
+    log.debug( 'auth-info response parsed' )
+    return
+
+  # def access_vars_page( self ):
+  #   with requests.Session() as s:
+  #       requests.packages.urllib3.disable_warnings()
+  #       r = s.get( self.SHIB_VARS_URL, verify=False )
+  #       self.cookies_a = r.cookies
+  #       log.debug( 'vars-page initial html, ```{}```'.format( r.content.decode('utf-8', 'replace') ) )
+  #       log.debug( '---' )
+  #       log.debug( 'cookies_a, ```{}```'.format( self.cookies_a ) )
+  #       log.debug( 'accessed vars-page' )
+
+  #       payload = {
+  #           'j_password': self.PASSWORD, 'j_username': self.USERNAME }
+  #       r2 = s.post( self.SHIB_POST_URL_A, data=payload, verify=False )
+  #       self.auth_info_response_html = r2.content.decode( 'utf-8', 'replace' )
+  #       self.cookies_b = r2.cookies
+  #       log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
+  #       log.debug( 'cookies_b, ```{}```'.format( self.cookies_b ) )
+  #       log.debug( 'auth-info posted' )
+
+  #       1/0
+
+  #   return
 
   # def access_vars_page( self ):
   #   requests.packages.urllib3.disable_warnings()
@@ -121,39 +173,39 @@ class ShibTunneler(object):
   #   log.debug( 'accessed vars-page' )
   #   return
 
-  def post_auth_info(self):
-    payload = {
-        'j_password': self.PASSWORD, 'j_username': self.USERNAME }
-    requests.packages.urllib3.disable_warnings()
-    r = requests.post( self.SHIB_POST_URL_A, data=payload, cookies=self.cookies_a, verify=False )
-    self.auth_info_response_html = r.content.decode( 'utf-8', 'replace' )
-    self.cookies_b = r.cookies
-    log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
-    log.debug( 'cookies_b, ```{}```'.format( self.cookies_b ) )
-    log.debug( 'auth-info posted' )
-    return
+  # def post_auth_info(self):
+  #   payload = {
+  #       'j_password': self.PASSWORD, 'j_username': self.USERNAME }
+  #   requests.packages.urllib3.disable_warnings()
+  #   r = requests.post( self.SHIB_POST_URL_A, data=payload, cookies=self.cookies_a, verify=False )
+  #   self.auth_info_response_html = r.content.decode( 'utf-8', 'replace' )
+  #   self.cookies_b = r.cookies
+  #   log.debug( 'auth_info_response_html, ```{}```'.format( self.auth_info_response_html ) )
+  #   log.debug( 'cookies_b, ```{}```'.format( self.cookies_b ) )
+  #   log.debug( 'auth-info posted' )
+  #   return
 
-  def parse_auth_info_response(self):
-    from xml.dom import minidom
-    try:
-        xmldoc = minidom.parseString( self.auth_info_response_html )
-    except Exception as e:
-        log.error( 'error parsing auth_info_response_html, ```{err_a}```, ```{err_b}```'.format( err_a=e, err_b=repr(e) ) )
-        return
-    ## getting here means shib-auth was successful
-    input_nodes = xmldoc.getElementsByTagName( u'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
-    values_dict = {}
-    for input_node in input_nodes:
-      if input_node.getAttributeNode( u'name' ) == None:  # ignore the 'submit' one
-        pass
-      elif input_node.getAttributeNode( u'name' ).nodeValue == u'RelayState':
-        values_dict[u'RelayState'] = input_node.getAttributeNode( u'value' ).nodeValue
-      elif input_node.getAttributeNode( u'name' ).nodeValue == u'SAMLResponse':
-        values_dict[u'SAMLResponse'] = input_node.getAttributeNode( u'value' ).nodeValue
-    assert sorted( values_dict.keys() ) == [u'RelayState', u'SAMLResponse'], sorted( values_dict.keys() )
-    self.auth_info_response_params_dict = values_dict
-    log.debug( 'auth-info response parsed' )
-    return
+  # def parse_auth_info_response(self):
+  #   from xml.dom import minidom
+  #   try:
+  #       xmldoc = minidom.parseString( self.auth_info_response_html )
+  #   except Exception as e:
+  #       log.error( 'error parsing auth_info_response_html, ```{err_a}```, ```{err_b}```'.format( err_a=e, err_b=repr(e) ) )
+  #       return
+  #   ## getting here means shib-auth was successful
+  #   input_nodes = xmldoc.getElementsByTagName( u'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
+  #   values_dict = {}
+  #   for input_node in input_nodes:
+  #     if input_node.getAttributeNode( u'name' ) == None:  # ignore the 'submit' one
+  #       pass
+  #     elif input_node.getAttributeNode( u'name' ).nodeValue == u'RelayState':
+  #       values_dict[u'RelayState'] = input_node.getAttributeNode( u'value' ).nodeValue
+  #     elif input_node.getAttributeNode( u'name' ).nodeValue == u'SAMLResponse':
+  #       values_dict[u'SAMLResponse'] = input_node.getAttributeNode( u'value' ).nodeValue
+  #   assert sorted( values_dict.keys() ) == [u'RelayState', u'SAMLResponse'], sorted( values_dict.keys() )
+  #   self.auth_info_response_params_dict = values_dict
+  #   log.debug( 'auth-info response parsed' )
+  #   return
 
   def post_final(self):
     assert type(self.auth_info_response_params_dict) == dict
