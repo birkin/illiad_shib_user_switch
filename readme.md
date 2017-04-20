@@ -4,7 +4,7 @@
 
     - This would allow us to shibbify the main illiad login for users (in front of illiad's remote-auth backend),
 
-    - and allow non-shib users to use a separte illiad-db-authNZ url,
+    - and allow non-shib users to use a separate illiad-db-authNZ url,
 
     - and maintain the existing easyAccess programmatic login on behalf of users (using illiad's remote-auth backend)
 
