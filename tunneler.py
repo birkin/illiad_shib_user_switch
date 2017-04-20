@@ -60,8 +60,8 @@ class ShibTunneler(object):
             log.debug( 'vars-page initial html, ```{}```\n---'.format( r.content.decode('utf-8', 'replace') ) )
             log.debug( 'accessed vars-page' )
             ( sess, auth_info_response_html ) = self.post_auth_info( sess )
-            auth_info_params_dct = self.parse_auth_info_response( auth_info_response_html )
-            jsn = self.post_final( sess, auth_info_params_dct )
+            ( relay_state, saml_response ) = self.parse_auth_info_response( auth_info_response_html )
+            jsn = self.post_final( sess, relay_state, saml_response )
         return jsn
 
     def post_auth_info( self, sess ):
@@ -80,9 +80,9 @@ class ShibTunneler(object):
             Called by access_vars_page() """
         xml_doc = self.docify_response( auth_info_response_html )  # getting here means shib-auth was successful
         input_nodes = xml_doc.getElementsByTagName( 'input' )  # picks up the three input nodes (the two hidden_value ones and the submit one)
-        auth_info_params_dct = self.parse_input_nodes(  input_nodes )
+        ( relay_state, saml_response ) = self.parse_input_nodes(  input_nodes )
         log.debug( 'auth-info response parsed' )
-        return auth_info_params_dct
+        return ( relay_state, saml_response )
 
     def docify_response( self, auth_info_response_html ):
         """ Converts html response into an xml-doc.
@@ -99,25 +99,23 @@ class ShibTunneler(object):
     def parse_input_nodes( self, input_nodes ):
         """ Parses the three input nodes to grab `RelayState` and `SAMLResponse` data.
             Called by parse_auth_info_response() """
-        values_dct = {}
+        ( relay_state, saml_response ) = ( None, None )
         for input_node in input_nodes:
-            if input_node.getAttributeNode( 'name' ) == None:  # ignore the 'submit' one
-                pass
-            elif input_node.getAttributeNode( 'name' ).nodeValue == 'RelayState':
-                values_dct['RelayState'] = input_node.getAttributeNode( 'value' ).nodeValue
-            elif input_node.getAttributeNode( 'name' ).nodeValue == 'SAMLResponse':
-                values_dct['SAMLResponse'] = input_node.getAttributeNode( 'value' ).nodeValue
-        # log.debug( 'values_dct, ```{}```'.format(values_dct) )
-        log.debug( 'values_dct.keys(), ```{}```'.format( values_dct.keys() ) )
-        return values_dct
+            if input_node.getAttributeNode( 'name' ):  # ignore the 'submit' one
+                if input_node.getAttributeNode( 'name' ).nodeValue == 'RelayState':
+                    relay_state = input_node.getAttributeNode( 'value' ).nodeValue
+                elif input_node.getAttributeNode( 'name' ).nodeValue == 'SAMLResponse':
+                    saml_response = input_node.getAttributeNode( 'value' ).nodeValue
+        # log.debug( 'relay_state, ```{rly}``` --||-- saml_response, ```{sml}```'.format( rly=relay_state, sml=saml_response ) )
+        log.debug( 'input nodes parsed' )
+        return ( relay_state, saml_response )
 
-    def post_final( self, sess, auth_info_params_dct ):
+    def post_final( self, sess, relay_state, saml_response ):
         """ Posts `RelayState` and `SAMLResponse` data to the IDP `SAML/POST` url.
             Auto-performed in user-browser by javascript; must be explicitly called otherwise.
             Called by access_vars_page() """
         payload = {
-            'RelayState': auth_info_params_dct['RelayState'],
-            'SAMLResponse': auth_info_params_dct['SAMLResponse'] }
+            'RelayState': relay_state, 'SAMLResponse': saml_response }
         requests.packages.urllib3.disable_warnings()
         r = sess.post( self.SHIB_POST_URL_B, data=payload, verify=False )
         jsn = r.content.decode( 'utf-8', 'replace' )
